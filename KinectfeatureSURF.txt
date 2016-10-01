@@ -1,0 +1,186 @@
+/*
+//Algo order.
+//Obtain webcam video, grab frames and extract SURF descriptors.
+//Step 1 to obtain webcam video
+#include <cv.h>
+#include <highgui.h>
+#include <iostream>
+#include "opencv2/core/core.hpp"
+#include "opencv2/features2d/features2d.hpp"
+#include "opencv2/nonfree/features2d.hpp"
+#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/nonfree/nonfree.hpp"
+#include <OpenNI.h>
+
+using namespace std;
+using namespace cv;
+
+
+int main(int argc, char* argv[])
+{
+	openni::Status rc = openni::STATUS_OK;
+	openni::Device device;
+	openni::VideoStream  color;
+	openni::VideoFrameRef colorFrame;
+
+	rc = openni::OpenNI::initialize();
+	rc = device.open(openni::ANY_DEVICE);
+	rc = color.create(device, openni::SENSOR_COLOR);
+	rc = color.start();
+
+	
+
+	while (true)
+	{
+		Mat frame,frame_next;
+		color.readFrame(&colorFrame);
+		const openni::RGB888Pixel* imageBuffer = (const openni::RGB888Pixel*)colorFrame.getData();
+
+		frame.create(colorFrame.getHeight(), colorFrame.getWidth(), CV_8UC3);
+		memcpy(frame.data, imageBuffer, 3 * colorFrame.getHeight()*colorFrame.getWidth()*sizeof(uint8_t));
+
+		cv::cvtColor(frame, frame, CV_BGR2RGB); //this will put colors right
+
+		/*VideoCapture cap(0);//open webcam
+		if (!cap.isOpened())//if it fails to capture from webcam
+		{
+		printf("Could not open camera! Sorry \n");
+		return -1;
+		}
+		double dWidth = cap.get(CV_CAP_PROP_FRAME_WIDTH);//get width details from camera
+		double dHeight = cap.get(CV_CAP_PROP_FRAME_HEIGHT);//get height details from camera
+		cout << "Frame Size" << dWidth << "x" << dHeight << endl;
+		//namedWindow("Video Stream", CV_WINDOW_AUTOSIZE);
+		double fps = cap.get(CV_CAP_PROP_FPS); //get the frames per seconds of the video
+		cout << "Frame per seconds : " << fps << endl;
+		//Step2 grab a frame
+		while (1)
+		{
+		Mat frame,frame_next,img_1,img_2;
+		bool bSuccess = cap.read(frame);//read a frame from the video.
+		if (!bSuccess)
+		{
+		cout << "Failed to capture frame" << endl;
+		break;
+		}
+		
+		namedWindow("Video Stream", CV_WINDOW_AUTOSIZE);
+		
+		Mat img_1, img_2;
+		//Step 3 SURF descriptors extract
+		cvtColor(frame, img_1, CV_BGR2GRAY);
+		//cap.read(frame_next);
+		cvtColor(frame, img_2, CV_BGR2GRAY);
+
+		if (!img_1.data || !img_2.data)
+		{
+			std::cout << " --(!) Error reading images " << std::endl; return -1;
+		}
+		//imshow("Video Stream", img_2);
+		
+		//-- Step 1: Detect the keypoints using SURF Detector
+		int minHessian = 400;
+
+		SurfFeatureDetector detector(minHessian);
+
+		std::vector<KeyPoint> keypoints_1, keypoints_2;
+
+		detector.detect(img_1, keypoints_1);//detects the keypoints in img_1
+		detector.detect(img_2, keypoints_2);//detects the keypoints in img_2
+
+		//-- Draw keypoints
+		Mat img_keypoints_1; Mat img_keypoints_2;
+
+		drawKeypoints(img_1, keypoints_1, img_keypoints_1, Scalar::all(-1), DrawMatchesFlags::DEFAULT);
+		drawKeypoints(img_2, keypoints_2, img_keypoints_2, Scalar::all(-1), DrawMatchesFlags::DEFAULT);
+
+		//-- Show detected (drawn) keypoints
+		//imshow("Keypoints 1", img_keypoints_1);
+		//imshow("Keypoints 2", img_keypoints_2);
+		
+		//-- Step 2: Calculate descriptors (feature vectors)
+		SurfDescriptorExtractor extractor;
+
+		Mat descriptors_object, descriptors_scene;
+
+		extractor.compute(frame, keypoints_1, descriptors_object);
+		extractor.compute(frame_next, keypoints_2, descriptors_scene);
+
+		//-- Step 3: Matching descriptor vectors using FLANN matcher
+		FlannBasedMatcher matcher;
+		std::vector< DMatch > matches;
+		matcher.match(descriptors_object, descriptors_scene, matches);
+
+		double max_dist = 0; double min_dist = 100;
+
+		//-- Quick calculation of max and min distances between keypoints
+		for (int i = 0; i < descriptors_object.rows; i++)
+		{
+			double dist = matches[i].distance;
+			if (dist < min_dist) min_dist = dist;
+			if (dist > max_dist) max_dist = dist;
+		}
+
+		//printf("-- Max dist : %f \n", max_dist);
+		//printf("-- Min dist : %f \n", min_dist);
+
+		//-- Draw only "good" matches (i.e. whose distance is less than 3*min_dist )
+		std::vector< DMatch > good_matches;
+
+		for (int i = 0; i < descriptors_object.rows; i++)
+		{
+			if (matches[i].distance < 3 * min_dist)
+			{
+				good_matches.push_back(matches[i]);
+			}
+		}
+
+		Mat img_matches;
+		drawMatches(frame, keypoints_1, frame_next, keypoints_2, good_matches, img_matches, Scalar::all(-1), Scalar::all(-1),
+			vector<char>(), DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+		//-- Localize the object
+		std::vector<Point2f> obj;
+		std::vector<Point2f> scene;
+
+		for (int i = 0; i < good_matches.size(); i++)
+		{
+			//-- Get the keypoints from the good matches
+			obj.push_back(keypoints_1[good_matches[i].queryIdx].pt);
+			scene.push_back(keypoints_2[good_matches[i].trainIdx].pt);
+		}
+
+		Mat H = findHomography(obj, scene, CV_RANSAC);
+
+		//-- Get the corners from the image_1 ( the object to be "detected" )
+		std::vector<Point2f> obj_corners(4);
+		obj_corners[0] = cvPoint(0, 0); obj_corners[1] = cvPoint(frame.cols, 0);
+		obj_corners[2] = cvPoint(frame.cols, frame.rows); obj_corners[3] = cvPoint(0, frame.rows);
+		std::vector<Point2f> scene_corners(4);
+
+		perspectiveTransform(obj_corners, scene_corners, H);
+
+		//-- Draw lines between the corners (the mapped object in the scene - image_2 )
+		line(img_matches, scene_corners[0] + Point2f(frame.cols, 0), scene_corners[1] + Point2f(frame.cols, 0), Scalar(0, 255, 0), 4);
+		line(img_matches, scene_corners[1] + Point2f(frame.cols, 0), scene_corners[2] + Point2f(frame.cols, 0), Scalar(0, 255, 0), 4);
+		line(img_matches, scene_corners[2] + Point2f(frame.cols, 0), scene_corners[3] + Point2f(frame.cols, 0), Scalar(0, 255, 0), 4);
+		line(img_matches, scene_corners[3] + Point2f(frame.cols, 0), scene_corners[0] + Point2f(frame.cols, 0), Scalar(0, 255, 0), 4);
+
+		namedWindow("Good Matches", WINDOW_AUTOSIZE);
+		//-- Show detected matches
+		imshow("Good Matches", img_matches);
+		
+
+		if (waitKey(30) == 27) //wait for 'esc' key press for 30ms. If 'esc' key is pressed, break loop
+		{
+			cout << "esc key is pressed by user" << endl;
+			break;
+		}
+	}
+		return 0;
+		
+}
+
+
+
+*/

@@ -1,0 +1,36 @@
+void createPointcloudFromRegisteredDepthImage(cv::Mat& depthImage, cv::Mat& rgbImage, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& outputPointcloud, Eigen::Matrix3f& rgbIntrinsicMatrix)
+{
+        float rgbFocalInvertedX = 1/rgbIntrinsicMatrix(0,0);	// 1/fx
+	float rgbFocalInvertedY = 1/rgbIntrinsicMatrix(1,1);	// 1/fy
+
+	pcl::PointXYZRGB newPoint;
+	for (int i=0;i<depthImage.rows;i++)
+	{
+		for (int j=0;j<depthImage.cols;j++)
+		{
+			float depthValue = depthImage.at<float>(i,j);
+
+			if (depthValue == depthValue)                // if depthValue is not NaN
+			{
+				// Find 3D position respect to rgb frame:
+				newPoint.z = depthValue;
+				newPoint.x = (j - rgbIntrinsicMatrix(0,2)) * newPoint.z * rgbFocalInvertedX;
+				newPoint.y = (i - rgbIntrinsicMatrix(1,2)) * newPoint.z * rgbFocalInvertedY;
+				newPoint.r = rgbImage.at<cv::Vec3b>(i,j)[2];
+				newPoint.g = rgbImage.at<cv::Vec3b>(i,j)[1];
+				newPoint.b = rgbImage.at<cv::Vec3b>(i,j)[0];
+				outputPointcloud->push_back(newPoint);
+			}
+			else
+			{
+				newPoint.z = std::numeric_limits<float>::quiet_NaN();
+				newPoint.x = std::numeric_limits<float>::quiet_NaN();
+				newPoint.y = std::numeric_limits<float>::quiet_NaN();
+				newPoint.r = std::numeric_limits<unsigned char>::quiet_NaN();
+				newPoint.g = std::numeric_limits<unsigned char>::quiet_NaN();
+				newPoint.b = std::numeric_limits<unsigned char>::quiet_NaN();
+				outputPointcloud->push_back(newPoint);
+			}
+		}
+	}
+}
